@@ -11,3 +11,6 @@ Pillow
 pypdf
 pdf2image
 pytesseract
+Jinja2
+google-genai
+PyMuPDF
