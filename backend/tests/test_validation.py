@@ -56,11 +56,22 @@ def test_balance_sheet_passes_when_assets_equal_liabilities():
     assert result["document_type"] == "balance_sheet"
     assert result["overall_status"] == "PASS"
 
-    assert len(result["checks"]) == 2
+    # Only the main total-vs-total check is applicable because
+    # component line items are not present in this synthetic case.
+    assert len(result["checks"]) == 6
 
-    for check in result["checks"]:
-        assert check["status"] == "PASS"
-        assert check["variance"] == 0.0
+# The first two checks are the total-vs-total
+# reconciliation for the two reporting periods.
+    assert result["checks"][0]["status"] == "PASS"
+    assert result["checks"][0]["variance"] == 0.0
+
+    assert result["checks"][1]["status"] == "PASS"
+    assert result["checks"][1]["variance"] == 0.0
+
+# The remaining component checks are NOT_APPLICABLE
+# because this synthetic test does not provide component values.
+    for check in result["checks"][2:]:
+        assert check["status"] == "NOT_APPLICABLE"
 
 
 def test_balance_sheet_fails_when_assets_do_not_match():
@@ -101,12 +112,15 @@ def test_balance_sheet_fails_when_assets_do_not_match():
     )
 
     assert result["overall_status"] == "FAIL"
-
-    assert len(result["checks"]) == 1
+    assert len(result["checks"]) == 3
 
     assert result["checks"][0]["status"] == "FAIL"
-
     assert result["checks"][0]["variance"] == -50.0
+
+    # Component checks are not applicable because component
+    # line items were not supplied.
+    assert result["checks"][1]["status"] == "NOT_APPLICABLE"
+    assert result["checks"][2]["status"] == "NOT_APPLICABLE"
 
 
 def test_balance_sheet_is_not_applicable_when_required_value_missing():
@@ -138,10 +152,12 @@ def test_balance_sheet_is_not_applicable_when_required_value_missing():
     )
 
     assert result["overall_status"] == "NOT_APPLICABLE"
+    assert len(result["checks"]) == 3
 
-    assert len(result["checks"]) == 1
-
-    assert result["checks"][0]["status"] == "NOT_APPLICABLE"
+    assert all(
+        check["status"] == "NOT_APPLICABLE"
+        for check in result["checks"]
+    )
 
 
 # ============================================================
@@ -285,9 +301,7 @@ def test_profit_and_loss_passes_all_main_checks():
     )
 
     assert result["document_type"] == "profit_and_loss"
-
     assert result["overall_status"] == "PASS"
-
     assert len(result["checks"]) == 5
 
     for check in result["checks"]:
@@ -345,11 +359,8 @@ def test_profit_and_loss_fails_when_total_income_is_wrong():
     first_check = result["checks"][0]
 
     assert first_check["status"] == "FAIL"
-
     assert first_check["calculated"] == 700.00
-
     assert first_check["reported"] == 650.00
-
     assert first_check["variance"] == 50.00
 
 
@@ -480,9 +491,7 @@ def test_cash_flow_passes():
     )
 
     assert result["document_type"] == "cash_flow_statement"
-
     assert result["overall_status"] == "PASS"
-
     assert len(result["checks"]) == 2
 
     for check in result["checks"]:
@@ -549,11 +558,8 @@ def test_cash_flow_fails_when_net_change_is_wrong():
     first_check = result["checks"][0]
 
     assert first_check["status"] == "FAIL"
-
     assert first_check["calculated"] == 350.00
-
     assert first_check["reported"] == 400.00
-
     assert first_check["variance"] == -50.00
 
 
@@ -613,7 +619,6 @@ def test_cash_flow_handles_negative_parentheses():
     )
 
     assert result["overall_status"] == "PASS"
-
     assert result["checks"][0]["status"] == "PASS"
 
 
@@ -629,11 +634,8 @@ def test_unsupported_document_type():
     )
 
     assert result["document_type"] == "unknown_type"
-
     assert result["overall_status"] == "NOT_APPLICABLE"
-
     assert len(result["checks"]) == 0
-
     assert len(result["issues"]) == 1
 
 
@@ -645,9 +647,7 @@ def test_empty_extracted_data_is_not_applicable():
     )
 
     assert result["document_type"] == "balance_sheet"
-
     assert result["overall_status"] == "NOT_APPLICABLE"
-
     assert result["checks"] == []
 
 
@@ -682,10 +682,9 @@ def test_missing_reporting_periods_uses_statement_item_periods():
     )
 
     assert result["overall_status"] == "PASS"
-
-    assert len(result["checks"]) == 1
-
+    assert len(result["checks"]) == 3
     assert result["checks"][0]["period"] == "March 31, 2026"
+    assert result["checks"][0]["status"] == "PASS"
 
 
 def test_small_rounding_difference_passes():
@@ -726,5 +725,4 @@ def test_small_rounding_difference_passes():
     )
 
     assert result["overall_status"] == "PASS"
-
     assert result["checks"][0]["status"] == "PASS"
