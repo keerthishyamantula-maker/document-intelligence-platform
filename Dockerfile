@@ -4,8 +4,8 @@ ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 ENV PIP_NO_CACHE_DIR=1
 
-RUN apt-get update `
-    && apt-get install -y --no-install-recommends tesseract-ocr `
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends tesseract-ocr \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
