@@ -1,0 +1,75 @@
+{
+  "document_type": "profit_and_loss",
+  "reporting_period": "March 31, 2026",
+  "comparative_period": "March 31, 2025",
+  "unit": "₹ crore",
+  "extracted_fields": {
+    "interest_earned": {
+      "2026": 348618.15,
+      "2025": 336367.43
+    },
+    "other_income": {
+      "2026": 146847.66,
+      "2025": 134548.50
+    },
+    "total_income": {
+      "2026": 495462.81,
+      "2025": 470915.93
+    },
+    "interest_expended": {
+      "2026": 185491.23,
+      "2025": 183894.20
+    },
+    "operating_expenses": {
+      "2026": 181173.91,
+      "2025": 176608.07
+    },
+    "provisions_and_contingencies": {
+      "2026": 49578.21,
+      "2025": 36976.49
+    },
+    "total_expenditure": {
+      "2026": 416243.35,
+      "2025": 397475.76
+    },
+    "consolidated_net_profit_before_minority_interest": {
+      "2026": 79219.46,
+      "2025": 73440.17
+    }
+  },
+  "financial_validation": {
+    "overall_status": "PASS",
+    "checks": [
+      {
+        "formula": "Interest Earned + Other Income ≈ Total Income",
+        "2026": {
+          "calculated": 495465.81,
+          "reported": 495462.81,
+          "variance": 3.0,
+          "status": "PASS"
+        },
+        "2025": {
+          "calculated": 470915.93,
+          "reported": 470915.93,
+          "variance": 0.0,
+          "status": "PASS"
+        }
+      },
+      {
+        "formula": "Interest Expended + Operating Expenses + Provisions and Contingencies ≈ Total Expenditure",
+        "2026": {
+          "calculated": 416243.35,
+          "reported": 416243.35,
+          "variance": 0.0,
+          "status": "PASS"
+        },
+        "2025": {
+          "calculated": 397478.76,
+          "reported": 397475.76,
+          "variance": 3.0,
+          "status": "PASS"
+        }
+      }
+    ]
+  }
+}

@@ -1,0 +1,45 @@
+{
+  "document_type": "balance_sheet",
+  "company_name": "HDFC Bank Limited",
+  "reporting_period": "March 31, 2026",
+  "comparative_period": "March 31, 2025",
+  "unit": "₹ crore",
+  "extracted_fields": {
+    "capital": {
+      "2026": 1539.34,
+      "2025": 765.22
+    },
+    "reserves": {
+      "2026": 579975.02,
+      "2025": 517218.98
+    },
+    "deposits": {
+      "2026": 3099638.29,
+      "2025": 2710898.23
+    },
+    "total": {
+      "2026": 4908040.84,
+      "2025": 4392417.42
+    }
+  },
+  "financial_validation": {
+    "overall_status": "PASS",
+    "checks": [
+      {
+        "formula": "Total Assets ≈ Total Capital and Liabilities",
+        "2026": {
+          "calculated": 4908040.84,
+          "reported": 4908040.84,
+          "variance": 0.0,
+          "status": "PASS"
+        },
+        "2025": {
+          "calculated": 4392417.42,
+          "reported": 4392417.42,
+          "variance": 0.0,
+          "status": "PASS"
+        }
+      }
+    ]
+  }
+}

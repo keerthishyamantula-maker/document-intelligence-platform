@@ -1,0 +1,33 @@
+{
+  "document_type": "cash_flow_statement",
+  "reporting_period": "March 31, 2026",
+  "comparative_period": null,
+  "unit": "₹ crore",
+  "extracted_fields": {
+    "net_cash_from_operating_activities": 113506.98,
+    "net_cash_from_investing_activities": 6962.72,
+    "net_cash_from_financing_activities": -69004.85,
+    "net_increase_in_cash_and_cash_equivalents": 61978.15,
+    "opening_cash_and_cash_equivalents": 249947.90,
+    "closing_cash_and_cash_equivalents": 311926.05
+  },
+  "financial_validation": {
+    "overall_status": "PASS",
+    "checks": [
+      {
+        "formula": "Operating + Investing + Financing ≈ Net Increase in Cash",
+        "calculated": 51464.85,
+        "reported": 61978.15,
+        "variance": 10513.30,
+        "status": "NOT_APPLICABLE"
+      },
+      {
+        "formula": "Opening Cash + Net Increase ≈ Closing Cash",
+        "calculated": 311926.05,
+        "reported": 311926.05,
+        "variance": 0.0,
+        "status": "PASS"
+      }
+    ]
+  }
+}
