@@ -213,9 +213,15 @@ def _find_statement_item(
                     best = current
 
             elif label in candidate:
+                # Do not allow a short/generic actual label such as
+                # "capital" to match a more specific requested candidate
+                # such as "total capital and liabilities".
+                # Otherwise the validator can incorrectly select "Capital"
+                # instead of "Total Capital & Liabilities".
+                if len(label_tokens) <= 1:
+                    continue
+
                 score = 700 + len(label_tokens) * 10 + len(label)
-                if len(label_tokens) <= 1 and len(label) < 8:
-                    score -= 500
 
                 current = (score, len(label), item)
                 if best is None or current[:2] > best[:2]:
