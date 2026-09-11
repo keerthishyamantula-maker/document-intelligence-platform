@@ -1,0 +1,21 @@
+﻿{
+  "document_type": "Invoice",
+  "document_name": "sample_invoice.jpg",
+  "status": "PASS",
+  "extracted_data": {
+    "invoice_number": null,
+    "invoice_date": null,
+    "seller": null,
+    "buyer": null,
+    "currency": null,
+    "subtotal": null,
+    "tax": null,
+    "total": null,
+    "line_items": []
+  },
+  "financial_validation": {
+    "status": "NOT_APPLICABLE",
+    "checks": []
+  },
+  "note": "Sample schema demonstrating the structured Invoice output. Values are null where no verified source document values are available."
+}
