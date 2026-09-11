@@ -1,5 +1,6 @@
 import io
 import logging
+import shutil
 import time
 from pathlib import Path
 
@@ -10,10 +11,23 @@ from PIL import Image
 
 logger = logging.getLogger(__name__)
 
-pytesseract.pytesseract.tesseract_cmd = (
-    r"C:\Program Files\Tesseract-OCR\tesseract.exe"
-)
 
+# Find Tesseract automatically.
+# This works on Render/Linux and on Windows when Tesseract
+# is available in PATH.
+tesseract_path = shutil.which("tesseract")
+
+# Windows fallback for the local development machine.
+if not tesseract_path:
+    windows_tesseract = Path(
+        r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+    )
+
+    if windows_tesseract.exists():
+        tesseract_path = str(windows_tesseract)
+
+if tesseract_path:
+    pytesseract.pytesseract.tesseract_cmd = tesseract_path
 
 SUPPORTED_IMAGE_EXTENSIONS = {
     ".jpg",
