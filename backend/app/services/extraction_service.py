@@ -1,6 +1,7 @@
 import json
 import logging
 import re
+from datetime import datetime
 from typing import Any
 
 from google import genai
@@ -136,10 +137,20 @@ def _extract_periods_from_ocr(
     No reporting year is hardcoded.
     """
 
-    ocr_text = "\n".join(
-        str(page.get("text", ""))
-        for page in ocr_pages
-    )
+    # Prefer dedicated header OCR because reporting periods are normally
+    # printed near the statement title. Fall back to page OCR afterwards.
+    ocr_sections = []
+
+    for page in ocr_pages:
+        header = str(page.get("header_text", "")).strip()
+        text = str(page.get("text", "")).strip()
+
+        if header:
+            ocr_sections.append(header)
+        if text:
+            ocr_sections.append(text)
+
+    ocr_text = "\n".join(ocr_sections)
 
     if not ocr_text.strip():
         return []
@@ -342,96 +353,178 @@ def _extract_periods_from_ocr(
 # PERIOD CORRECTION
 # ============================================================
 
+def _is_valid_date_text(value: Any) -> bool:
+    """Return True only for a real calendar date string."""
+
+    if not isinstance(value, str):
+        return False
+
+    text = " ".join(value.split()).strip()
+
+    formats = (
+        "%B %d, %Y",
+        "%b %d, %Y",
+        "%d %B %Y",
+        "%d %b %Y",
+        "%d/%m/%Y",
+        "%d-%m-%Y",
+        "%Y/%m/%d",
+        "%Y-%m-%d",
+    )
+
+    for fmt in formats:
+        try:
+            datetime.strptime(text, fmt)
+            return True
+        except ValueError:
+            continue
+
+    return False
+
+
+def _unique_valid_periods(values: Any) -> list[str]:
+    """Return unique, valid calendar dates while preserving order."""
+
+    if not isinstance(values, list):
+        return []
+
+    result: list[str] = []
+
+    for value in values:
+        if not _is_valid_date_text(value):
+            continue
+
+        cleaned = " ".join(str(value).split()).strip()
+
+        if cleaned.lower() not in {
+            item.lower()
+            for item in result
+        }:
+            result.append(cleaned)
+
+    return result
+
+
+def _get_ai_reporting_periods(
+    extracted_data: dict[str, Any],
+) -> list[str]:
+    """Get valid reporting periods already produced by Gemini."""
+
+    fields = extracted_data.get("fields")
+
+    if isinstance(fields, dict):
+        reporting_periods = fields.get("reporting_periods")
+
+        if isinstance(reporting_periods, dict):
+            values = reporting_periods.get("value")
+            periods = _unique_valid_periods(values)
+            if periods:
+                return periods
+
+        elif isinstance(reporting_periods, list):
+            periods = _unique_valid_periods(reporting_periods)
+            if periods:
+                return periods
+
+    top_level = extracted_data.get("reporting_periods")
+
+    if isinstance(top_level, dict):
+        return _unique_valid_periods(
+            top_level.get("value")
+        )
+
+    if isinstance(top_level, list):
+        return _unique_valid_periods(top_level)
+
+    return []
+
+
 def _fix_statement_periods(
     extracted_data: dict[str, Any],
     ocr_pages: list[dict[str, Any]],
 ) -> dict[str, Any]:
     """
-    Replace AI-generated statement period labels with reliable
-    statement-header periods found in OCR.
+    Safely normalize reporting periods.
 
-    The function never hardcodes a year and never creates a date.
-    If OCR does not expose enough reliable periods, existing AI
-    periods are preserved rather than guessed.
+    OCR is preferred only when it contains enough VALID calendar
+    dates to represent the statement periods. This is important for
+    scanned financial statements because OCR can produce impossible
+    dates such as ``March 91, 2088``. Such OCR output must never
+    overwrite a valid period returned by Gemini.
+
+    No year or date is hardcoded here.
     """
 
-    periods = _extract_periods_from_ocr(
-        ocr_pages
+    ocr_periods = _unique_valid_periods(
+        _extract_periods_from_ocr(ocr_pages)
     )
+
+    ai_periods = _get_ai_reporting_periods(
+        extracted_data
+    )
+
+    # If OCR produced no valid dates, keep Gemini's valid dates.
+    if not ocr_periods:
+        periods = ai_periods
+    # If OCR found fewer periods than Gemini already supplied, it is
+    # incomplete, so do not replace the complete AI result.
+    elif ai_periods and len(ocr_periods) < len(ai_periods):
+        periods = ai_periods
+    else:
+        periods = ocr_periods
 
     if not periods:
         return extracted_data
 
-    # --------------------------------------------------------
-    # Correct the top-level reporting_periods field when it
-    # already exists or create it when reliable OCR periods
-    # were found.
-    # --------------------------------------------------------
+    fields = extracted_data.get("fields")
 
-    reporting_periods = extracted_data.get(
-        "reporting_periods"
-    )
+    if not isinstance(fields, dict):
+        fields = {}
+        extracted_data["fields"] = fields
 
-    if isinstance(
-        reporting_periods,
-        dict,
-    ):
+    reporting_periods = fields.get("reporting_periods")
+
+    if isinstance(reporting_periods, dict):
         reporting_periods["value"] = periods
-
-    elif reporting_periods is None:
-        extracted_data["reporting_periods"] = {
+    else:
+        fields["reporting_periods"] = {
             "value": periods,
             "evidence": None,
         }
 
-    # --------------------------------------------------------
-    # Correct statement item period labels.
-    #
-    # Only do this when the number of extracted values exactly
-    # matches the number of reliable OCR periods.
-    # --------------------------------------------------------
+    top_level_reporting_periods = extracted_data.get(
+        "reporting_periods"
+    )
 
+    if isinstance(top_level_reporting_periods, dict):
+        top_level_reporting_periods["value"] = periods
+
+    # Correct statement item periods only when we have a complete
+    # reliable period list. This preserves comparative periods.
     statement_items = extracted_data.get(
         "statement_items",
         [],
     )
 
-    if not isinstance(
-        statement_items,
-        list,
-    ):
+    if not isinstance(statement_items, list):
         return extracted_data
 
     for item in statement_items:
 
-        if not isinstance(
-            item,
-            dict,
-        ):
+        if not isinstance(item, dict):
             continue
 
-        values = item.get(
-            "values",
-            [],
-        )
+        values = item.get("values", [])
 
-        if not isinstance(
-            values,
-            list,
-        ):
+        if not isinstance(values, list):
             continue
 
         if len(values) != len(periods):
             continue
 
-        for index, value_entry in enumerate(
-            values
-        ):
+        for index, value_entry in enumerate(values):
 
-            if not isinstance(
-                value_entry,
-                dict,
-            ):
+            if not isinstance(value_entry, dict):
                 continue
 
             value_entry["period"] = periods[index]

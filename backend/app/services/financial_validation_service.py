@@ -462,6 +462,116 @@ def _validate_balance_sheet(
             )
         )
 
+    # Independently reconcile the visible liability/capital and asset
+    # components. This is intentionally separate from the total-vs-total
+    # check: if OCR/AI corrupts a reported total, comparing that total with
+    # itself would incorrectly produce PASS.
+
+    liability_candidates = [
+        ["capital"],
+        ["employees stock options units outstanding",
+         "employees stock options / units outstanding"],
+        ["reserves and surplus"],
+        ["minority interest"],
+        ["deposits"],
+        ["borrowings"],
+        ["other liabilities and provisions"],
+        ["policyholders funds", "policyholders' funds"],
+    ]
+
+    asset_candidates = [
+        ["cash and balances with reserve bank of india"],
+        ["balances with banks and money at call and short notice"],
+        ["investments"],
+        ["advances"],
+        ["fixed assets"],
+        ["other assets"],
+    ]
+
+    liability_items = [
+        _find_statement_item(statement_items, candidates)
+        for candidates in liability_candidates
+    ]
+    asset_items = [
+        _find_statement_item(statement_items, candidates)
+        for candidates in asset_candidates
+    ]
+
+    for period in periods:
+        liability_values = {
+            f"item_{index + 1}": _values_for_period(item, period)
+            for index, item in enumerate(liability_items)
+        }
+        asset_values = {
+            f"item_{index + 1}": _values_for_period(item, period)
+            for index, item in enumerate(asset_items)
+        }
+
+        liability_inputs = {}
+        for index, item in enumerate(liability_items):
+            label = item.get("line_item") if item else f"item_{index + 1}"
+            liability_inputs[str(label)] = liability_values[f"item_{index + 1}"]
+
+        asset_inputs = {}
+        for index, item in enumerate(asset_items):
+            label = item.get("line_item") if item else f"item_{index + 1}"
+            asset_inputs[str(label)] = asset_values[f"item_{index + 1}"]
+
+        liability_values_list = list(liability_values.values())
+        asset_values_list = list(asset_values.values())
+
+        liability_calculated = (
+            sum(liability_values_list)
+            if liability_values_list and all(v is not None for v in liability_values_list)
+            else None
+        )
+        asset_calculated = (
+            sum(asset_values_list)
+            if asset_values_list and all(v is not None for v in asset_values_list)
+            else None
+        )
+
+        reported_liabilities = _values_for_period(
+            total_capital_liabilities_item, period
+        )
+        reported_assets = _values_for_period(
+            total_assets_item, period
+        )
+
+        checks.append(
+            _build_check(
+                check="Capital & Liability Components ≈ Total Capital & Liabilities",
+                formula="Sum of extracted capital/liability components ≈ Total Capital & Liabilities",
+                period=period,
+                input_values=liability_inputs | {
+                    "reported_total_capital_and_liabilities": reported_liabilities,
+                },
+                calculated=liability_calculated,
+                reported=reported_liabilities,
+                not_applicable_reason=(
+                    "One or more required capital/liability components or "
+                    "the reported total is missing for this period."
+                ),
+            )
+        )
+
+        checks.append(
+            _build_check(
+                check="Asset Components ≈ Total Assets",
+                formula="Sum of extracted asset components ≈ Total Assets",
+                period=period,
+                input_values=asset_inputs | {
+                    "reported_total_assets": reported_assets,
+                },
+                calculated=asset_calculated,
+                reported=reported_assets,
+                not_applicable_reason=(
+                    "One or more required asset components or the reported "
+                    "total is missing for this period."
+                ),
+            )
+        )
+
     return _finalize_validation(checks)
 
 
