@@ -423,3 +423,16 @@ Automated testing
 Docker-based deployment
 
 The implementation is designed specifically for the four required financial document categories: Invoice, Balance Sheet, Profit & Loss, and Cash Flow Statement.
+## Live Deployment
+
+### Frontend / Application
+https://document-intelligence-platform-4d2l.onrender.com
+
+### API Documentation (Swagger)
+https://document-intelligence-platform-4d2l.onrender.com/docs
+
+### Health Check
+https://document-intelligence-platform-4d2l.onrender.com/api/v1/health
+
+### GitHub Repository
+https://github.com/keerthishyamantula-maker/document-intelligence-platform
