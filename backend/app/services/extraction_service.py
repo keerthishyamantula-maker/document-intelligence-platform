@@ -1,4 +1,5 @@
 import json
+import json
 import logging
 import re
 from datetime import datetime
@@ -832,6 +833,155 @@ def _ensure_evidence_structure(
 
 
 # ============================================================
+# EXTRACTION NORMALIZATION
+# ============================================================
+
+def _field_scalar(field: Any) -> Any:
+    """Return the value from either a scalar or {value: ...} field."""
+    if isinstance(field, dict) and "value" in field:
+        return field.get("value")
+    return field
+
+
+def _set_field_scalar(fields: dict[str, Any], key: str, value: Any) -> None:
+    """Update a field while preserving the application's field structure."""
+    current = fields.get(key)
+    if isinstance(current, dict):
+        current["value"] = value
+    else:
+        fields[key] = {"value": value, "evidence": None}
+
+
+def _normalize_currency_and_units(
+    extracted_data: dict[str, Any],
+) -> dict[str, Any]:
+    """
+    Keep currency and scale/unit semantically separate.
+
+    Examples:
+        "INR" / "crore" -> currency=INR, units=crore
+        "₹ in crore"    -> currency=INR, units=crore
+        "in crore"      -> currency=None, units=crore
+
+    The last case is intentional: crore is a scale, not a currency, and
+    INR is not invented unless the source-supported extraction contains
+    an INR/rupee symbol or wording.
+    """
+    fields = extracted_data.get("fields")
+    if not isinstance(fields, dict):
+        return extracted_data
+
+    currency_key = next(
+        (key for key in ("currency", "currency_code", "currency_type") if key in fields),
+        None,
+    )
+    units_key = next(
+        (key for key in ("units", "unit", "scale", "amount_unit") if key in fields),
+        None,
+    )
+
+    currency_value = _field_scalar(fields.get(currency_key)) if currency_key else None
+    units_value = _field_scalar(fields.get(units_key)) if units_key else None
+
+    currency_text = str(currency_value).strip() if currency_value is not None else ""
+    units_text = str(units_value).strip() if units_value is not None else ""
+
+    combined = f"{currency_text} {units_text}".strip()
+    lowered = combined.lower()
+
+    scale_patterns = (
+        (r"\bcrores?\b", "crore"),
+        (r"\blakhs?\b", "lakh"),
+        (r"\bmillions?\b", "million"),
+        (r"\bbillions?\b", "billion"),
+        (r"\bthousands?\b", "thousand"),
+    )
+
+    detected_scale = None
+    for pattern, canonical in scale_patterns:
+        if re.search(pattern, lowered, flags=re.IGNORECASE):
+            detected_scale = canonical
+            break
+
+    source_supports_inr = bool(
+        re.search(
+            r"(?:₹|\bINR\b|\bRs\.?\b|\bRupees?\b|\bIndian\s+Rupees?\b)",
+            combined,
+            flags=re.IGNORECASE,
+        )
+    )
+
+    if detected_scale:
+        if units_key:
+            _set_field_scalar(fields, units_key, detected_scale)
+        else:
+            _set_field_scalar(fields, "units", detected_scale)
+
+    # If the extracted currency field contains only a scale phrase such as
+    # "in crore", it is not a currency. Preserve the scale and clear currency.
+    if currency_key:
+        if detected_scale and not source_supports_inr:
+            _set_field_scalar(fields, currency_key, None)
+        elif source_supports_inr:
+            _set_field_scalar(fields, currency_key, "INR")
+
+    return extracted_data
+
+
+def _normalize_statement_labels(
+    extracted_data: dict[str, Any],
+) -> dict[str, Any]:
+    """Clean a small set of deterministic OCR label artifacts without inventing rows."""
+    replacements = {
+        "contingentliabilities": "Contingent Liabilities",
+        "contingentliabilites": "Contingent Liabilities",
+        "contingentliabilties": "Contingent Liabilities",
+        "otherliabilities": "Other Liabilities",
+        "otherassets": "Other Assets",
+        "totalequity": "Total Equity",
+        "totalassets": "Total Assets",
+        "totalliabilities": "Total Liabilities",
+        "totalincome": "Total Income",
+        "totalexpenditure": "Total Expenditure",
+    }
+
+    statement_items = extracted_data.get("statement_items")
+    if not isinstance(statement_items, list):
+        return extracted_data
+
+    cleaned_items = []
+    for item in statement_items:
+        if not isinstance(item, dict):
+            continue
+
+        label = item.get("line_item")
+        if isinstance(label, str):
+            normalized = re.sub(r"\s+", " ", label).strip()
+            compact = re.sub(r"[^a-z]", "", normalized.lower())
+            if compact in replacements:
+                normalized = replacements[compact]
+            # Very short OCR fragments such as "Trl" are not meaningful
+            # financial labels when no values/evidence support them.
+            values = item.get("values")
+            evidence = item.get("evidence")
+            has_values = isinstance(values, list) and any(
+                isinstance(v, dict) and v.get("value") is not None
+                for v in values
+            )
+            has_evidence = isinstance(evidence, dict) and bool(
+                str(evidence.get("source_text") or "").strip()
+            )
+            if len(normalized) <= 3 and not has_values and not has_evidence:
+                continue
+            item["line_item"] = normalized
+
+        cleaned_items.append(item)
+
+    extracted_data["statement_items"] = cleaned_items
+    return extracted_data
+
+
+# ============================================================
 # EXTRACTION PROMPT
 # ============================================================
 
@@ -1391,6 +1541,16 @@ def extract_structured_data(
 
         # 3. Normalize evidence.
         extracted_data = _ensure_evidence_structure(
+            extracted_data
+        )
+
+        # 4. Keep currency separate from statement scale/unit.
+        extracted_data = _normalize_currency_and_units(
+            extracted_data
+        )
+
+        # 5. Remove only deterministic OCR label artifacts.
+        extracted_data = _normalize_statement_labels(
             extracted_data
         )
 

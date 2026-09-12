@@ -2,6 +2,30 @@ import re
 from typing import Any
 
 
+DOCUMENT_TYPE_ALIASES = {
+    "invoice": "invoice",
+    "invoices": "invoice",
+    "balance_sheet": "balance_sheet",
+    "balance sheet": "balance_sheet",
+    "balance-sheet": "balance_sheet",
+    "profit_and_loss": "profit_and_loss",
+    "profit and loss": "profit_and_loss",
+    "profit & loss": "profit_and_loss",
+    "profit/loss": "profit_and_loss",
+    "p&l": "profit_and_loss",
+    "p & l": "profit_and_loss",
+    "cash_flow_statement": "cash_flow_statement",
+    "cash flow statement": "cash_flow_statement",
+    "cash-flow statement": "cash_flow_statement",
+    "cash flow": "cash_flow_statement",
+}
+
+
+def _normalize_document_type(value: Any) -> str:
+    text = str(value or "").strip().lower()
+    return DOCUMENT_TYPE_ALIASES.get(text, text)
+
+
 # Financial amounts in statements are commonly rounded to 2 decimals.
 # The relative tolerance also allows small rounding differences in large values.
 TOLERANCE = 0.01
@@ -1475,7 +1499,7 @@ def validate_financial_document(
       - profit_and_loss
       - cash_flow_statement
     """
-    normalized_type = str(document_type).strip().lower()
+    normalized_type = _normalize_document_type(document_type)
 
     if normalized_type == "balance_sheet":
         result = _validate_balance_sheet(extracted_data)

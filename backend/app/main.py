@@ -26,7 +26,15 @@ app = FastAPI(
     ),
     version="1.0.0",
 )
-
+@app.get("/api/v1", tags=["default"])
+def api_root():
+    return {
+        "service": "Document Intelligence API",
+        "version": "v1",
+        "status": "available",
+        "docs": "/docs",
+        "health": "/api/v1/health",
+    }
 
 # ============================================================
 # CORS

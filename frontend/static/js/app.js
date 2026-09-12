@@ -1,3 +1,35 @@
+"use strict";
+
+/*
+ * ============================================================
+ * DOCUMENT INTELLIGENCE PLATFORM - FRONTEND
+ * ============================================================
+ *
+ * This file handles:
+ *   - File upload
+ *   - Document type selection
+ *   - API processing
+ *   - Dashboard document list
+ *   - Individual document results
+ *   - File validation display
+ *   - AI extracted data display
+ *   - Financial validation display
+ *   - Evidence display
+ *   - Raw JSON display
+ *
+ * Backend:
+ *   FastAPI
+ *
+ * API prefix:
+ *   /api/v1
+ * ============================================================
+ */
+
+
+// ============================================================
+// CONFIGURATION
+// ============================================================
+
 const API_BASE_URL = "/api/v1";
 
 
@@ -34,7 +66,421 @@ const refreshButton =
 
 
 // ============================================================
-// UTILITY FUNCTIONS
+// GENERAL HELPERS
+// ============================================================
+
+function escapeHtml(value) {
+
+    if (
+        value === null ||
+        value === undefined
+    ) {
+        return "";
+    }
+
+    return String(value)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+}
+
+
+function safeText(value) {
+
+    if (
+        value === null ||
+        value === undefined
+    ) {
+        return "";
+    }
+
+    return String(value).trim();
+}
+
+
+function getDisplayValue(value) {
+
+    if (
+        value === null ||
+        value === undefined
+    ) {
+        return null;
+    }
+
+    /*
+     * Backend may return structured values such as:
+     *
+     * {
+     *     "value": 1234
+     * }
+     *
+     * or:
+     *
+     * {
+     *     "reported_value": 1234
+     * }
+     */
+
+    if (
+        typeof value === "object" &&
+        !Array.isArray(value)
+    ) {
+
+        if (
+            Object.prototype.hasOwnProperty.call(
+                value,
+                "value"
+            )
+        ) {
+            return getDisplayValue(
+                value.value
+            );
+        }
+
+        if (
+            Object.prototype.hasOwnProperty.call(
+                value,
+                "reported_value"
+            )
+        ) {
+            return getDisplayValue(
+                value.reported_value
+            );
+        }
+
+        if (
+            Object.prototype.hasOwnProperty.call(
+                value,
+                "calculated_value"
+            )
+        ) {
+            return getDisplayValue(
+                value.calculated_value
+            );
+        }
+    }
+
+    return value;
+}
+
+
+function formatValue(value) {
+
+    const displayValue =
+        getDisplayValue(value);
+
+    if (
+        displayValue === null ||
+        displayValue === undefined ||
+        displayValue === ""
+    ) {
+
+        return `
+            <span class="missing-value">
+                Missing
+            </span>
+        `;
+    }
+
+
+    if (
+        typeof displayValue === "boolean"
+    ) {
+
+        return displayValue
+            ? "Yes"
+            : "No";
+    }
+
+
+    if (
+        Array.isArray(displayValue)
+    ) {
+
+        return escapeHtml(
+            displayValue.join(" | ")
+        );
+    }
+
+
+    if (
+        typeof displayValue === "object"
+    ) {
+
+        return `
+            <pre class="inline-json">${escapeHtml(
+                JSON.stringify(
+                    displayValue,
+                    null,
+                    2
+                )
+            )}</pre>
+        `;
+    }
+
+
+    return escapeHtml(
+        String(displayValue)
+    );
+}
+
+
+function formatFieldName(name) {
+
+    if (!name) {
+        return "";
+    }
+
+    return String(name)
+        .replace(/_/g, " ")
+        .replace(/([a-z])([A-Z])/g, "$1 $2")
+        .replace(/\s+/g, " ")
+        .trim()
+        .replace(/\b\w/g, character =>
+            character.toUpperCase()
+        );
+}
+
+
+function formatDocumentType(type) {
+
+    if (!type) {
+        return "Unknown";
+    }
+
+    const normalized =
+        String(type)
+            .trim()
+            .toLowerCase();
+
+    const mapping = {
+        invoice: "Invoice",
+        balance_sheet: "Balance Sheet",
+        "balance sheet": "Balance Sheet",
+        profit_and_loss: "Profit & Loss",
+        "profit and loss": "Profit & Loss",
+        pnl: "Profit & Loss",
+        cash_flow: "Cash Flow Statement",
+        "cash flow": "Cash Flow Statement",
+        "cash flow statement": "Cash Flow Statement"
+    };
+
+    return (
+        mapping[normalized] ||
+        String(type)
+    );
+}
+
+
+function statusClass(status) {
+
+    if (!status) {
+        return "status-neutral";
+    }
+
+    const normalized =
+        String(status)
+            .trim()
+            .toLowerCase();
+
+    if (
+        normalized === "pass" ||
+        normalized === "passed" ||
+        normalized === "success" ||
+        normalized === "successful" ||
+        normalized === "valid"
+    ) {
+        return "status-success";
+    }
+
+    if (
+        normalized === "fail" ||
+        normalized === "failed" ||
+        normalized === "error" ||
+        normalized === "invalid"
+    ) {
+        return "status-error";
+    }
+
+    if (
+        normalized === "not_applicable" ||
+        normalized === "not applicable" ||
+        normalized === "n/a"
+    ) {
+        return "status-warning";
+    }
+
+    return "status-neutral";
+}
+
+
+function formatDate(value) {
+
+    if (!value) {
+        return "—";
+    }
+
+    try {
+
+        const date =
+            new Date(value);
+
+        if (
+            Number.isNaN(
+                date.getTime()
+            )
+        ) {
+            return escapeHtml(
+                String(value)
+            );
+        }
+
+        return date.toLocaleString();
+
+    } catch (error) {
+
+        return escapeHtml(
+            String(value)
+        );
+    }
+}
+
+
+function formatEvidence(evidence) {
+
+    if (!evidence) {
+        return "—";
+    }
+
+    if (
+        typeof evidence === "string"
+    ) {
+
+        if (evidence.length <= 240) {
+            return escapeHtml(evidence);
+        }
+
+        return `
+            <details>
+                <summary>
+                    View evidence
+                </summary>
+
+                <div class="evidence-text">
+                    ${escapeHtml(evidence)}
+                </div>
+            </details>
+        `;
+    }
+
+
+    if (
+        typeof evidence !== "object"
+    ) {
+        return escapeHtml(
+            String(evidence)
+        );
+    }
+
+
+    const sourceText =
+        evidence.source_text ||
+        evidence.text ||
+        evidence.raw_text ||
+        evidence.evidence ||
+        "";
+
+
+    const pageNumber =
+        evidence.page_number ??
+        evidence.page ??
+        null;
+
+
+    if (!sourceText) {
+
+        return escapeHtml(
+            JSON.stringify(evidence)
+        );
+    }
+
+
+    const pageHtml =
+        pageNumber !== null
+            ? `
+                <br>
+                <small>
+                    Page ${escapeHtml(pageNumber)}
+                </small>
+              `
+            : "";
+
+
+    if (
+        String(sourceText).length <= 240
+    ) {
+
+        return `
+            ${escapeHtml(sourceText)}
+            ${pageHtml}
+        `;
+    }
+
+
+    return `
+        <details>
+
+            <summary>
+                View evidence
+            </summary>
+
+            <div class="evidence-text">
+                ${escapeHtml(sourceText)}
+            </div>
+
+            ${pageHtml}
+
+        </details>
+    `;
+}
+
+
+function normalizeResponseData(response) {
+
+    if (!response) {
+        return null;
+    }
+
+
+    if (
+        response.data &&
+        typeof response.data === "object" &&
+        !Array.isArray(response.data)
+    ) {
+
+        /*
+         * Only unwrap if the outer response looks
+         * like a wrapper rather than actual extracted data.
+         */
+
+        if (
+            response.success !== undefined ||
+            response.status !== undefined ||
+            response.message !== undefined
+        ) {
+            return response.data;
+        }
+    }
+
+
+    return response;
+}
+
+
+// ============================================================
+// MESSAGE DISPLAY
 // ============================================================
 
 function showMessage(
@@ -46,225 +492,32 @@ function showMessage(
         return;
     }
 
+
     messageBox.textContent =
-        message;
+        message || "";
+
 
     messageBox.className =
-        `message ${type}`;
+        `message-box ${type}`;
+
 
     messageBox.style.display =
-        "block";
+        message
+            ? "block"
+            : "none";
 }
 
 
-function hideMessage() {
+function clearMessage() {
 
     if (!messageBox) {
         return;
     }
 
+    messageBox.textContent = "";
+
     messageBox.style.display =
         "none";
-}
-
-
-function escapeHtml(value) {
-
-    if (
-        value === null ||
-        value === undefined
-    ) {
-
-        return "";
-
-    }
-
-    return String(value)
-        .replace(/&/g, "&amp;")
-        .replace(/</g, "&lt;")
-        .replace(/>/g, "&gt;")
-        .replace(/"/g, "&quot;")
-        .replace(/'/g, "&#039;");
-
-}
-
-
-function formatValue(value) {
-
-    if (
-        value === null ||
-        value === undefined ||
-        value === ""
-    ) {
-
-        return `
-            <span class="missing-value">
-                Missing
-            </span>
-        `;
-
-    }
-
-
-    // Handle structured fields such as:
-    // { value: null, evidence: null }
-    if (
-        typeof value === "object" &&
-        !Array.isArray(value) &&
-        Object.prototype.hasOwnProperty.call(
-            value,
-            "value"
-        )
-    ) {
-
-        return formatValue(
-            value.value
-        );
-
-    }
-
-
-    if (
-        typeof value === "object"
-    ) {
-
-        return escapeHtml(
-            JSON.stringify(
-                value
-            )
-        );
-
-    }
-
-
-    return escapeHtml(value);
-
-}
-
-
-function formatDate(value) {
-
-    if (!value) {
-        return "—";
-    }
-
-
-    try {
-
-        return new Date(
-            value
-        ).toLocaleString();
-
-    } catch {
-
-        return value;
-
-    }
-
-}
-
-
-function statusClass(status) {
-
-    if (!status) {
-        return "status-unknown";
-    }
-
-
-    const normalized =
-        String(status)
-            .toUpperCase();
-
-
-    if (
-        normalized === "PASS"
-    ) {
-
-        return "status-pass";
-
-    }
-
-
-    if (
-        normalized === "FAILED" ||
-        normalized === "FAIL"
-    ) {
-
-        return "status-failed";
-
-    }
-
-
-    if (
-        normalized ===
-        "NOT_APPLICABLE"
-    ) {
-
-        return "status-na";
-
-    }
-
-
-    return "status-unknown";
-
-}
-
-
-// ============================================================
-// DOCUMENT TYPE
-// ============================================================
-
-function formatDocumentType(
-    value
-) {
-
-    const labels = {
-
-        invoice:
-            "Invoice",
-
-        balance_sheet:
-            "Balance Sheet",
-
-        profit_and_loss:
-            "Profit & Loss",
-
-        cash_flow_statement:
-            "Cash Flow Statement"
-
-    };
-
-
-    return (
-        labels[value] ||
-        value ||
-        "Unknown"
-    );
-
-}
-
-
-// ============================================================
-// FIELD NAME
-// ============================================================
-
-function formatFieldName(
-    fieldName
-) {
-
-    return String(
-        fieldName
-    )
-        .replace(
-            /_/g,
-            " "
-        )
-        .replace(
-            /\b\w/g,
-            character =>
-                character.toUpperCase()
-        );
-
 }
 
 
@@ -283,11 +536,7 @@ async function checkHealth() {
 
 
         if (!response.ok) {
-
-            throw new Error(
-                "Backend health check failed."
-            );
-
+            return false;
         }
 
 
@@ -295,26 +544,22 @@ async function checkHealth() {
             await response.json();
 
 
-        console.log(
-            "Backend health:",
-            data
+        return (
+            data.status === "healthy" ||
+            data.status === "ok" ||
+            data.healthy === true ||
+            response.ok
         );
-
-
-        return true;
 
     } catch (error) {
 
         console.error(
-            "Health check error:",
+            "Health check failed:",
             error
         );
 
-
         return false;
-
     }
-
 }
 
 
@@ -322,28 +567,47 @@ async function checkHealth() {
 // PROCESS DOCUMENT
 // ============================================================
 
-async function processDocument(
-    event
-) {
+async function processDocument(event) {
 
-    if (event) {
+    event.preventDefault();
 
-        event.preventDefault();
+    clearMessage();
 
+
+    if (!fileInput) {
+
+        showMessage(
+            "File input is not available.",
+            "error"
+        );
+
+        return;
     }
 
 
-    hideMessage();
+    const file =
+        fileInput.files &&
+        fileInput.files[0];
 
 
-    // --------------------------------------------------------
-    // Validate document type
-    // --------------------------------------------------------
+    if (!file) {
 
-    if (
-        !documentType ||
-        !documentType.value
-    ) {
+        showMessage(
+            "Please select a PDF, JPG, or PNG file.",
+            "error"
+        );
+
+        return;
+    }
+
+
+    const selectedType =
+        documentType
+            ? documentType.value
+            : "";
+
+
+    if (!selectedType) {
 
         showMessage(
             "Please select a document type.",
@@ -351,74 +615,41 @@ async function processDocument(
         );
 
         return;
-
     }
 
 
-    // --------------------------------------------------------
-    // Validate file
-    // --------------------------------------------------------
+    const allowedTypes = [
+        "application/pdf",
+        "image/jpeg",
+        "image/jpg",
+        "image/png"
+    ];
 
-    if (
-        !fileInput ||
-        !fileInput.files ||
-        !fileInput.files.length
-    ) {
-
-        showMessage(
-            "Please select a document file.",
-            "error"
-        );
-
-        return;
-
-    }
-
-
-    const file =
-        fileInput.files[0];
-
-
-    // --------------------------------------------------------
-    // Validate extension
-    // --------------------------------------------------------
 
     const fileName =
         file.name.toLowerCase();
 
 
-    const allowedExtensions = [
-        ".pdf",
-        ".jpg",
-        ".jpeg",
-        ".png"
-    ];
-
-
     const validExtension =
-        allowedExtensions.some(
-            extension =>
-                fileName.endsWith(
-                    extension
-                )
-        );
+        fileName.endsWith(".pdf") ||
+        fileName.endsWith(".jpg") ||
+        fileName.endsWith(".jpeg") ||
+        fileName.endsWith(".png");
 
 
-    if (!validExtension) {
+    if (
+        !allowedTypes.includes(file.type) &&
+        !validExtension
+    ) {
 
         showMessage(
-            "Unsupported file format. Please upload PDF, JPG, JPEG or PNG.",
+            "Unsupported file type. Please upload PDF, JPG, or PNG.",
             "error"
         );
 
         return;
-
     }
 
-
-    // --------------------------------------------------------
-    // FormData
-    // --------------------------------------------------------
 
     const formData =
         new FormData();
@@ -432,36 +663,32 @@ async function processDocument(
 
     formData.append(
         "document_type",
-        documentType.value
+        selectedType
     );
 
 
-    // --------------------------------------------------------
-    // Button
-    // --------------------------------------------------------
+    /*
+     * Prevent duplicate submissions.
+     */
 
     if (processButton) {
 
         processButton.disabled =
             true;
 
+        processButton.dataset.originalText =
+            processButton.textContent;
+
         processButton.textContent =
             "Processing...";
-
     }
 
 
     showMessage(
-        `Processing as ${formatDocumentType(
-            documentType.value
-        )}...`,
+        "Uploading and processing document. Please wait...",
         "info"
     );
 
-
-    // --------------------------------------------------------
-    // API CALL
-    // --------------------------------------------------------
 
     try {
 
@@ -475,98 +702,101 @@ async function processDocument(
             );
 
 
-        let data;
+        let result = null;
 
 
         try {
 
-            data =
+            result =
                 await response.json();
 
-        } catch {
+        } catch (jsonError) {
 
             throw new Error(
-                "The server returned an invalid response."
+                `Server returned an invalid response (${response.status}).`
             );
-
         }
 
 
         if (!response.ok) {
 
-            const serverMessage =
-                data?.detail?.message ||
-                data?.detail ||
-                "Document processing failed.";
-
+            const errorMessage =
+                result?.detail ||
+                result?.message ||
+                result?.error ||
+                `Processing failed with HTTP ${response.status}.`;
 
             throw new Error(
-                serverMessage
+                errorMessage
             );
-
         }
 
 
-        // ----------------------------------------------------
-        // Display result immediately
-        // ----------------------------------------------------
+        /*
+         * The backend may wrap the actual result
+         * inside "result".
+         */
+
+        if (
+            result &&
+            result.result &&
+            typeof result.result === "object"
+        ) {
+
+            result =
+                result.result;
+        }
+
 
         displayProcessingResult(
-            data.result || data
+            result
         );
 
 
-        // ----------------------------------------------------
-        // Refresh dashboard
-        // ----------------------------------------------------
+        showMessage(
+            "Document processed successfully.",
+            "success"
+        );
+
 
         await loadDocuments();
-
-
-        const result =
-            data.result ||
-            data;
-
-
-        const status =
-            result.processing_status ||
-            result.status ||
-            "UNKNOWN";
-
-
-        if (
-            String(status).toUpperCase() ===
-            "PASS"
-        ) {
-
-            showMessage(
-                "Document processed successfully.",
-                "success"
-            );
-
-        } else {
-
-            showMessage(
-                "Document processing completed, but the document did not receive PASS status. Review the result below.",
-                "warning"
-            );
-
-        }
 
 
     } catch (error) {
 
         console.error(
-            "Processing error:",
+            "Document processing failed:",
             error
         );
 
 
         showMessage(
             error.message ||
-            "Unable to process document.",
+            "Unable to process the document.",
             "error"
         );
+
+
+        if (resultContent) {
+
+            resultContent.innerHTML = `
+                <section class="result-card">
+
+                    <h3>
+                        Processing Error
+                    </h3>
+
+                    <p class="missing-value">
+                        ${escapeHtml(
+                            error.message ||
+                            "Unknown processing error."
+                        )}
+                    </p>
+
+                </section>
+            `;
+        }
+
 
     } finally {
 
@@ -576,17 +806,15 @@ async function processDocument(
                 false;
 
             processButton.textContent =
+                processButton.dataset.originalText ||
                 "Process Document";
-
         }
-
     }
-
 }
 
 
 // ============================================================
-// LOAD PROCESSED DOCUMENTS
+// LOAD DOCUMENTS
 // ============================================================
 
 async function loadDocuments() {
@@ -596,23 +824,16 @@ async function loadDocuments() {
     }
 
 
-    documentsTableBody.innerHTML = `
-
-        <tr>
-
-            <td
-                colspan="5"
-                class="loading-cell"
-            >
-                Loading documents...
-            </td>
-
-        </tr>
-
-    `;
-
-
     try {
+
+        documentsTableBody.innerHTML = `
+            <tr>
+                <td colspan="6">
+                    Loading documents...
+                </td>
+            </tr>
+        `;
+
 
         const response =
             await fetch(
@@ -623,9 +844,8 @@ async function loadDocuments() {
         if (!response.ok) {
 
             throw new Error(
-                "Unable to retrieve documents."
+                `Unable to load documents (${response.status}).`
             );
-
         }
 
 
@@ -633,168 +853,168 @@ async function loadDocuments() {
             await response.json();
 
 
+        let documents = data;
+
+
+        if (
+            data &&
+            Array.isArray(data.documents)
+        ) {
+
+            documents =
+                data.documents;
+        }
+
+
+        if (
+            data &&
+            Array.isArray(data.results)
+        ) {
+
+            documents =
+                data.results;
+        }
+
+
+        if (
+            !Array.isArray(documents)
+        ) {
+
+            documents = [];
+        }
+
+
         renderDocuments(
-            data.documents || []
+            documents
         );
 
 
     } catch (error) {
 
         console.error(
-            "Load documents error:",
+            "Failed to load documents:",
             error
         );
 
 
         documentsTableBody.innerHTML = `
-
             <tr>
+                <td colspan="6">
 
-                <td
-                    colspan="5"
-                    class="error-cell"
-                >
-                    Unable to load processed documents.
+                    <span class="missing-value">
+                        Unable to load documents.
+                    </span>
+
                 </td>
-
             </tr>
-
         `;
-
     }
-
 }
 
 
 // ============================================================
-// RENDER DOCUMENT TABLE
+// RENDER DOCUMENT LIST
 // ============================================================
 
-function renderDocuments(
-    documents
-) {
+function renderDocuments(documents) {
 
     if (!documentsTableBody) {
         return;
     }
 
 
-    if (
-        !documents ||
-        documents.length === 0
-    ) {
+    if (!documents.length) {
 
         documentsTableBody.innerHTML = `
-
             <tr>
 
                 <td
-                    colspan="5"
-                    class="empty-cell"
+                    colspan="6"
+                    style="text-align:center;"
                 >
-                    No documents have been processed yet.
+                    No documents processed yet.
                 </td>
 
             </tr>
-
         `;
 
         return;
-
     }
 
 
     documentsTableBody.innerHTML =
-        documents.map(
-            document => {
+        documents
+            .map(document => {
 
                 const name =
                     document.document_name ||
-                    document.file_name ||
                     document.filename ||
-                    "Unnamed document";
+                    document.file_name ||
+                    document.name ||
+                    "Unknown";
 
 
                 const type =
                     document.document_type ||
-                    "—";
+                    document.type ||
+                    "Unknown";
 
 
                 const status =
-                    document.processing_status ||
                     document.status ||
-                    "UNKNOWN";
+                    document.processing_status ||
+                    "Unknown";
 
 
                 const createdAt =
                     document.created_at ||
                     document.processed_at ||
-                    document.timestamp ||
+                    document.created ||
                     null;
+
+
+                const pageCount =
+                    document.page_count ??
+                    document.pages ??
+                    "—";
 
 
                 const encodedName =
                     encodeURIComponent(
-                        document.document_name ||
-                        document.file_name ||
-                        document.filename ||
-                        ""
+                        name
                     );
 
 
                 return `
-
                     <tr>
 
                         <td>
-
-                            <span
-                                class="document-name"
-                            >
-                                ${escapeHtml(name)}
-                            </span>
-
+                            ${escapeHtml(name)}
                         </td>
 
-
                         <td>
-
                             ${escapeHtml(
-                                formatDocumentType(
-                                    type
-                                )
+                                formatDocumentType(type)
                             )}
-
                         </td>
 
-
                         <td>
-
                             <span
-                                class="status ${statusClass(
-                                    status
-                                )}"
+                                class="status ${statusClass(status)}"
                             >
-
-                                ${escapeHtml(
-                                    status
-                                )}
-
+                                ${escapeHtml(status)}
                             </span>
-
                         </td>
-
 
                         <td>
-
                             ${escapeHtml(
-                                formatDate(
-                                    createdAt
-                                )
+                                String(pageCount)
                             )}
-
                         </td>
 
+                        <td>
+                            ${formatDate(createdAt)}
+                        </td>
 
                         <td>
 
@@ -803,52 +1023,80 @@ function renderDocuments(
                                 class="view-button"
                                 onclick="viewDocument('${encodedName}')"
                             >
-                                View Result
+                                View
                             </button>
 
                         </td>
 
                     </tr>
-
                 `;
 
-            }
-        )
-        .join("");
-
+            })
+            .join("");
 }
 
 
 // ============================================================
-// VIEW DOCUMENT RESULT
+// VIEW SINGLE DOCUMENT
 // ============================================================
 
-async function viewDocument(
-    encodedDocumentName
-) {
+async function viewDocument(encodedName) {
+
+    clearMessage();
+
+
+    let documentName;
+
 
     try {
 
-        const documentName =
+        documentName =
             decodeURIComponent(
-                encodedDocumentName
+                encodedName
             );
 
+    } catch (error) {
 
-        if (!documentName) {
+        documentName =
+            encodedName;
+    }
 
-            throw new Error(
-                "Document name is missing."
-            );
 
-        }
-
+    if (!documentName) {
 
         showMessage(
-            "Loading document result...",
-            "info"
+            "Document name is missing.",
+            "error"
         );
 
+        return;
+    }
+
+
+    if (resultContent) {
+
+        resultContent.innerHTML = `
+            <section class="result-card">
+
+                <h3>
+                    Loading document...
+                </h3>
+
+            </section>
+        `;
+    }
+
+
+    if (resultPanel) {
+
+        resultPanel.scrollIntoView({
+            behavior: "smooth",
+            block: "start"
+        });
+    }
+
+
+    try {
 
         const response =
             await fetch(
@@ -858,50 +1106,27 @@ async function viewDocument(
             );
 
 
-        let data;
-
-
-        try {
-
-            data =
-                await response.json();
-
-        } catch {
-
-            throw new Error(
-                "The server returned an invalid response."
-            );
-
-        }
-
-
         if (!response.ok) {
 
-            const serverMessage =
-                data?.detail?.message ||
-                data?.detail ||
-                "Document could not be found.";
-
-
             throw new Error(
-                serverMessage
+                `Unable to load document (${response.status}).`
             );
-
         }
 
 
-        // IMPORTANT:
-        // Backend may return either:
-        //
-        // { ...result... }
-        //
-        // OR
-        //
-        // { "result": { ...result... } }
+        let result =
+            await response.json();
 
-        const result =
-            data.result ||
-            data;
+
+        if (
+            result &&
+            result.result &&
+            typeof result.result === "object"
+        ) {
+
+            result =
+                result.result;
+        }
 
 
         displayProcessingResult(
@@ -909,16 +1134,10 @@ async function viewDocument(
         );
 
 
-        showMessage(
-            "Document result loaded.",
-            "success"
-        );
-
-
     } catch (error) {
 
         console.error(
-            "View document error:",
+            "Failed to load document:",
             error
         );
 
@@ -929,14 +1148,33 @@ async function viewDocument(
             "error"
         );
 
-    }
 
+        if (resultContent) {
+
+            resultContent.innerHTML = `
+                <section class="result-card">
+
+                    <h3>
+                        Error
+                    </h3>
+
+                    <p class="missing-value">
+                        ${escapeHtml(
+                            error.message ||
+                            "Unable to load document."
+                        )}
+                    </p>
+
+                </section>
+            `;
+        }
+    }
 }
 
 
-// ============================================================
-// MAKE VIEW DOCUMENT AVAILABLE TO HTML
-// ============================================================
+/*
+ * Make the function available to inline HTML onclick handlers.
+ */
 
 window.viewDocument =
     viewDocument;
@@ -946,54 +1184,74 @@ window.viewDocument =
 // DISPLAY PROCESSING RESULT
 // ============================================================
 
-function displayProcessingResult(
-    result
-) {
-
-    if (!resultPanel) {
-
-        console.error(
-            "resultPanel was not found."
-        );
-
-        return;
-
-    }
-
+function displayProcessingResult(result) {
 
     if (!resultContent) {
-
-        console.error(
-            "resultContent was not found."
-        );
-
         return;
-
     }
 
 
-    // IMPORTANT:
-    // resultPanel starts with display:none.
+    if (!result) {
 
-    resultPanel.style.display =
-        "block";
+        resultContent.innerHTML = `
+            <section class="result-card">
+
+                <h3>
+                    No Result
+                </h3>
+
+                <p class="missing-value">
+                    No processing result was returned.
+                </p>
+
+            </section>
+        `;
+
+        return;
+    }
+
+
+    /*
+     * Sometimes the complete API response is wrapped
+     * inside a "data" property.
+     */
+
+    if (
+        result.data &&
+        typeof result.data === "object" &&
+        !Array.isArray(result.data) &&
+        (
+            result.result === undefined ||
+            result.document_name === undefined
+        )
+    ) {
+
+        result =
+            {
+                ...result.data,
+                ...result
+            };
+    }
 
 
     const documentName =
         result.document_name ||
+        result.filename ||
         result.file_name ||
-        "Document";
+        result.name ||
+        "Processed Document";
 
 
     const type =
         result.document_type ||
-        "unknown";
+        result.type ||
+        "Unknown";
 
 
     const status =
-        result.processing_status ||
         result.status ||
-        "UNKNOWN";
+        result.processing_status ||
+        "Unknown";
 
 
     resultContent.innerHTML = `
@@ -1008,34 +1266,21 @@ function displayProcessingResult(
                     )}
                 </h3>
 
-
                 <p>
-
                     Type:
-
                     <strong>
-
                         ${escapeHtml(
-                            formatDocumentType(
-                                type
-                            )
+                            formatDocumentType(type)
                         )}
-
                     </strong>
-
                 </p>
 
             </div>
 
-
             <span
                 class="status ${statusClass(status)}"
             >
-
-                ${escapeHtml(
-                    status
-                )}
-
+                ${escapeHtml(status)}
             </span>
 
         </div>
@@ -1070,31 +1315,26 @@ function displayProcessingResult(
                 View Raw JSON
             </summary>
 
-
-            <pre>
-
-${escapeHtml(
-    JSON.stringify(
-        result,
-        null,
-        2
-    )
-)}
-
-            </pre>
+            <pre>${escapeHtml(
+                JSON.stringify(
+                    result,
+                    null,
+                    2
+                )
+            )}</pre>
 
         </details>
 
     `;
 
 
-    // Scroll to result
+    if (resultPanel) {
 
-    resultPanel.scrollIntoView({
-        behavior: "smooth",
-        block: "start"
-    });
-
+        resultPanel.scrollIntoView({
+            behavior: "smooth",
+            block: "start"
+        });
+    }
 }
 
 
@@ -1109,32 +1349,27 @@ function renderFileValidation(
     if (!validation) {
 
         return `
-
             <section class="result-card">
 
                 <h3>
                     File Validation
                 </h3>
 
-                <p>
+                <p class="missing-value">
                     No validation result available.
                 </p>
 
             </section>
-
         `;
-
     }
 
 
     return `
-
         <section class="result-card">
 
             <h3>
                 File Validation
             </h3>
-
 
             <div class="info-grid">
 
@@ -1143,24 +1378,20 @@ function renderFileValidation(
                     validation.file_type
                 )}
 
-
                 ${renderInfoCard(
                     "Is Supported",
                     validation.is_supported
                 )}
-
 
                 ${renderInfoCard(
                     "Is Readable",
                     validation.is_readable
                 )}
 
-
                 ${renderInfoCard(
                     "Page Count",
                     validation.page_count
                 )}
-
 
                 ${renderInfoCard(
                     "Status",
@@ -1170,9 +1401,7 @@ function renderFileValidation(
             </div>
 
         </section>
-
     `;
-
 }
 
 
@@ -1187,7 +1416,6 @@ function renderExtractedData(
     if (!data) {
 
         return `
-
             <section class="result-card">
 
                 <h3>
@@ -1199,9 +1427,81 @@ function renderExtractedData(
                 </p>
 
             </section>
-
         `;
+    }
 
+
+    /*
+     * IMPORTANT:
+     *
+     * When AI extraction fails, backend returns something
+     * similar to:
+     *
+     * {
+     *     "success": false,
+     *     "error_code": "GEMINI_EXTRACTION_FAILED",
+     *     "message": "AI extraction failed..."
+     * }
+     *
+     * Do not display this as if it were successful
+     * extracted financial data.
+     */
+
+    if (
+        data.success === false
+    ) {
+
+        return `
+            <section class="result-card">
+
+                <h3>
+                    Extracted Data
+                </h3>
+
+                <div class="status status-error">
+                    AI Extraction Failed
+                </div>
+
+                ${
+                    data.error_code
+                        ? `
+                            <p>
+                                <strong>
+                                    Error Code:
+                                </strong>
+
+                                ${escapeHtml(
+                                    data.error_code
+                                )}
+                            </p>
+                          `
+                        : ""
+                }
+
+                <p class="missing-value">
+                    ${escapeHtml(
+                        data.message ||
+                        "AI extraction failed. Please try the document again."
+                    )}
+                </p>
+
+            </section>
+        `;
+    }
+
+
+    /*
+     * Unwrap nested data object if required.
+     */
+
+    if (
+        data.data &&
+        typeof data.data === "object" &&
+        !Array.isArray(data.data)
+    ) {
+
+        data =
+            data.data;
     }
 
 
@@ -1216,9 +1516,32 @@ function renderExtractedData(
     `;
 
 
-    // --------------------------------------------------------
-    // Fields
-    // --------------------------------------------------------
+    // ========================================================
+    // DOCUMENT TYPE
+    // ========================================================
+
+    if (data.document_type) {
+
+        html += `
+
+            <div class="key-value-grid">
+
+                ${renderInfoCard(
+                    "Document Type",
+                    formatDocumentType(
+                        data.document_type
+                    )
+                )}
+
+            </div>
+
+        `;
+    }
+
+
+    // ========================================================
+    // FIELDS
+    // ========================================================
 
     if (
         data.fields &&
@@ -1240,12 +1563,29 @@ function renderExtractedData(
         for (
             const [
                 key,
-                value
+                rawValue
             ]
             of Object.entries(
                 data.fields
             )
         ) {
+
+            const value =
+                getDisplayValue(
+                    rawValue
+                );
+
+
+            /*
+             * reporting_periods gets its own section.
+             */
+
+            if (
+                key === "reporting_periods"
+            ) {
+                continue;
+            }
+
 
             html += `
 
@@ -1254,13 +1594,10 @@ function renderExtractedData(
                     <div class="key">
 
                         ${escapeHtml(
-                            formatFieldName(
-                                key
-                            )
+                            formatFieldName(key)
                         )}
 
                     </div>
-
 
                     <div class="value">
 
@@ -1273,7 +1610,6 @@ function renderExtractedData(
                 </div>
 
             `;
-
         }
 
 
@@ -1282,13 +1618,12 @@ function renderExtractedData(
             </div>
 
         `;
-
     }
 
 
-    // --------------------------------------------------------
-    // Direct fields
-    // --------------------------------------------------------
+    // ========================================================
+    // DIRECT FIELDS
+    // ========================================================
 
     const reservedKeys =
         new Set([
@@ -1297,7 +1632,11 @@ function renderExtractedData(
             "line_items",
             "reporting_periods",
             "evidence",
-            "document_type"
+            "document_type",
+            "success",
+            "message",
+            "error",
+            "error_code"
         ]);
 
 
@@ -1313,28 +1652,27 @@ function renderExtractedData(
     ) {
 
         if (
-            !reservedKeys.has(key)
+            reservedKeys.has(key)
         ) {
-
-            if (
-                typeof value !== "object" ||
-                value === null
-            ) {
-
-                directFields[key] =
-                    value;
-
-            }
-
+            continue;
         }
 
+
+        if (
+            value === null ||
+            typeof value !== "object"
+        ) {
+
+            directFields[key] =
+                value;
+        }
     }
 
 
     if (
         Object.keys(
             directFields
-        ).length
+        ).length > 0
     ) {
 
         html += `
@@ -1365,13 +1703,10 @@ function renderExtractedData(
                     <div class="key">
 
                         ${escapeHtml(
-                            formatFieldName(
-                                key
-                            )
+                            formatFieldName(key)
                         )}
 
                     </div>
-
 
                     <div class="value">
 
@@ -1384,7 +1719,6 @@ function renderExtractedData(
                 </div>
 
             `;
-
         }
 
 
@@ -1393,21 +1727,80 @@ function renderExtractedData(
             </div>
 
         `;
-
     }
 
 
-    // --------------------------------------------------------
-    // Reporting periods
-    // --------------------------------------------------------
+    // ========================================================
+    // REPORTING PERIODS
+    // ========================================================
+
+    let reportingPeriods =
+        data.reporting_periods;
+
+
+    /*
+     * Some extraction responses place reporting_periods
+     * inside fields.
+     */
 
     if (
-        data.reporting_periods
+        reportingPeriods === undefined &&
+        data.fields
     ) {
 
-        const periods =
-            data.reporting_periods?.value ??
-            data.reporting_periods;
+        reportingPeriods =
+            data.fields.reporting_periods;
+    }
+
+
+    if (
+        reportingPeriods !== null &&
+        reportingPeriods !== undefined
+    ) {
+
+        if (
+            reportingPeriods &&
+            typeof reportingPeriods === "object" &&
+            !Array.isArray(reportingPeriods) &&
+            Object.prototype.hasOwnProperty.call(
+                reportingPeriods,
+                "value"
+            )
+        ) {
+
+            reportingPeriods =
+                reportingPeriods.value;
+        }
+
+
+        if (
+            Array.isArray(
+                reportingPeriods
+            )
+        ) {
+
+            reportingPeriods =
+                reportingPeriods
+                    .map(period => {
+
+                        if (
+                            period &&
+                            typeof period === "object"
+                        ) {
+
+                            return (
+                                period.period ||
+                                period.value ||
+                                ""
+                            );
+                        }
+
+                        return period;
+
+                    })
+                    .filter(Boolean)
+                    .join(" | ");
+        }
 
 
         html += `
@@ -1418,40 +1811,26 @@ function renderExtractedData(
 
             <div class="key-value-grid">
 
-                <div class="key-value-item">
-
-                    <div class="key">
-                        Reporting Periods
-                    </div>
-
-                    <div class="value">
-
-                        ${formatValue(
-                            Array.isArray(periods)
-                                ? periods.join(" | ")
-                                : periods
-                        )}
-
-                    </div>
-
-                </div>
+                ${renderInfoCard(
+                    "Reporting Periods",
+                    reportingPeriods
+                )}
 
             </div>
 
         `;
-
     }
 
 
-    // --------------------------------------------------------
-    // Statement items
-    // --------------------------------------------------------
+    // ========================================================
+    // FINANCIAL STATEMENT ITEMS
+    // ========================================================
 
     if (
         Array.isArray(
             data.statement_items
         ) &&
-        data.statement_items.length
+        data.statement_items.length > 0
     ) {
 
         html += `
@@ -1488,7 +1867,6 @@ function renderExtractedData(
 
                     </thead>
 
-
                     <tbody>
 
         `;
@@ -1499,6 +1877,18 @@ function renderExtractedData(
             of data.statement_items
         ) {
 
+            const itemName =
+                item.line_item ||
+                item.item ||
+                item.label ||
+                "—";
+
+
+            const schedule =
+                item.schedule ||
+                "—";
+
+
             const values =
                 Array.isArray(
                     item.values
@@ -1507,44 +1897,57 @@ function renderExtractedData(
                     : [];
 
 
-            const valuesHtml =
-                values
-                    .map(
-                        value => `
+            let valuesHtml =
+                "—";
 
-                            <div>
 
-                                <strong>
+            if (
+                values.length > 0
+            ) {
 
-                                    ${escapeHtml(
-                                        value?.period ||
-                                        ""
+                valuesHtml =
+                    values
+                        .map(value => {
+
+                            const period =
+                                value?.period ||
+                                "";
+
+
+                            const actualValue =
+                                getDisplayValue(
+                                    value?.value
+                                );
+
+
+                            return `
+
+                                <div>
+
+                                    ${
+                                        period
+                                            ? `
+                                                <strong>
+                                                    ${escapeHtml(
+                                                        period
+                                                    )}
+                                                </strong>
+                                                :
+                                              `
+                                            : ""
+                                    }
+
+                                    ${formatValue(
+                                        actualValue
                                     )}
 
-                                </strong>
+                                </div>
 
-                                :
+                            `;
 
-                                ${formatValue(
-                                    value?.value
-                                )}
-
-                            </div>
-
-                        `
-                    )
-                    .join("");
-
-
-            const evidence =
-                item.evidence ||
-                {};
-
-
-            const sourceText =
-                evidence.source_text ||
-                evidence.text ||
-                "";
+                        })
+                        .join("");
+            }
 
 
             html += `
@@ -1552,66 +1955,30 @@ function renderExtractedData(
                 <tr>
 
                     <td>
-
                         ${escapeHtml(
-                            item.line_item ||
-                            item.item ||
-                            "—"
+                            itemName
                         )}
-
                     </td>
 
-
                     <td>
-
                         ${escapeHtml(
-                            item.schedule ||
-                            "—"
+                            schedule
                         )}
-
                     </td>
 
-
                     <td>
-
-                        ${valuesHtml || "—"}
-
+                        ${valuesHtml}
                     </td>
 
-
                     <td>
-
-                        ${escapeHtml(
-                            sourceText ||
-                            "—"
+                        ${formatEvidence(
+                            item.evidence
                         )}
-
-                        ${
-                            evidence.page_number !==
-                            undefined &&
-                            evidence.page_number !==
-                            null
-                                ? `
-                                    <br>
-
-                                    <small>
-
-                                        Page
-                                        ${escapeHtml(
-                                            evidence.page_number
-                                        )}
-
-                                    </small>
-                                `
-                                : ""
-                        }
-
                     </td>
 
                 </tr>
 
             `;
-
         }
 
 
@@ -1624,19 +1991,18 @@ function renderExtractedData(
             </div>
 
         `;
-
     }
 
 
-    // --------------------------------------------------------
-    // Invoice line items
-    // --------------------------------------------------------
+    // ========================================================
+    // INVOICE LINE ITEMS
+    // ========================================================
 
     if (
         Array.isArray(
             data.line_items
         ) &&
-        data.line_items.length
+        data.line_items.length > 0
     ) {
 
         html += `
@@ -1673,7 +2039,6 @@ function renderExtractedData(
 
                     </thead>
 
-
                     <tbody>
 
         `;
@@ -1684,54 +2049,62 @@ function renderExtractedData(
             of data.line_items
         ) {
 
+            const description =
+                item.description ??
+                "—";
+
+
+            const quantity =
+                item.quantity ??
+                item.qty ??
+                "—";
+
+
+            const unitPrice =
+                item.unit_price ??
+                item.unitPrice ??
+                item.price ??
+                "—";
+
+
+            const amount =
+                item.amount ??
+                item.line_total ??
+                item.line_total_amount ??
+                "—";
+
+
             html += `
 
                 <tr>
 
                     <td>
-
-                        ${escapeHtml(
-                            item.description ??
-                            "—"
+                        ${formatValue(
+                            description
                         )}
-
                     </td>
 
-
                     <td>
-
-                        ${escapeHtml(
-                            item.quantity ??
-                            "—"
+                        ${formatValue(
+                            quantity
                         )}
-
                     </td>
 
-
                     <td>
-
-                        ${escapeHtml(
-                            item.unit_price ??
-                            "—"
+                        ${formatValue(
+                            unitPrice
                         )}
-
                     </td>
 
-
                     <td>
-
-                        ${escapeHtml(
-                            item.amount ??
-                            item.line_total ??
-                            "—"
+                        ${formatValue(
+                            amount
                         )}
-
                     </td>
 
                 </tr>
 
             `;
-
         }
 
 
@@ -1744,7 +2117,54 @@ function renderExtractedData(
             </div>
 
         `;
+    }
 
+
+    // ========================================================
+    // DOCUMENT-LEVEL EVIDENCE
+    // ========================================================
+
+    if (
+        data.evidence
+    ) {
+
+        const evidenceText =
+            typeof data.evidence === "string"
+                ? data.evidence
+                : (
+                    data.evidence.source_text ||
+                    data.evidence.text ||
+                    data.evidence.raw_text ||
+                    ""
+                );
+
+
+        if (evidenceText) {
+
+            html += `
+
+                <h4>
+                    Document Evidence
+                </h4>
+
+                <details>
+
+                    <summary>
+                        View extracted evidence
+                    </summary>
+
+                    <div class="evidence-text">
+
+                        ${escapeHtml(
+                            evidenceText
+                        )}
+
+                    </div>
+
+                </details>
+
+            `;
+        }
     }
 
 
@@ -1756,7 +2176,6 @@ function renderExtractedData(
 
 
     return html;
-
 }
 
 
@@ -1771,26 +2190,24 @@ function renderFinancialValidation(
     if (!validation) {
 
         return `
-
             <section class="result-card">
 
                 <h3>
                     Financial Validation
                 </h3>
 
-                <p>
+                <p class="missing-value">
                     No financial validation result available.
                 </p>
 
             </section>
-
         `;
-
     }
 
 
     const overallStatus =
         validation.overall_status ||
+        validation.status ||
         "NOT_APPLICABLE";
 
 
@@ -1810,24 +2227,20 @@ function renderFinancialValidation(
                 Financial Validation
             </h3>
 
-
             <p>
 
                 <strong>
                     Overall Status:
                 </strong>
 
-
                 <span
                     class="status ${statusClass(
                         overallStatus
                     )}"
                 >
-
                     ${escapeHtml(
                         overallStatus
                     )}
-
                 </span>
 
             </p>
@@ -1835,7 +2248,25 @@ function renderFinancialValidation(
     `;
 
 
-    if (!checks.length) {
+    if (
+        validation.message
+    ) {
+
+        html += `
+
+            <p>
+                ${escapeHtml(
+                    validation.message
+                )}
+            </p>
+
+        `;
+    }
+
+
+    if (
+        !checks.length
+    ) {
 
         html += `
 
@@ -1892,7 +2323,6 @@ function renderFinancialValidation(
 
                     </thead>
 
-
                     <tbody>
 
         `;
@@ -1903,83 +2333,95 @@ function renderFinancialValidation(
             of checks
         ) {
 
+            const checkName =
+                check.name ||
+                check.check ||
+                check.rule ||
+                "—";
+
+
+            const formula =
+                check.formula ||
+                "—";
+
+
+            const period =
+                check.period ||
+                "—";
+
+
+            const calculated =
+                check.calculated_value ??
+                check.calculated ??
+                null;
+
+
+            const reported =
+                check.reported_value ??
+                check.reported ??
+                null;
+
+
+            const variance =
+                check.variance ??
+                null;
+
+
+            const checkStatus =
+                check.status ||
+                "NOT_APPLICABLE";
+
+
             html += `
 
                 <tr>
 
                     <td>
-
                         ${escapeHtml(
-                            check.name ||
-                            check.check ||
-                            "—"
+                            checkName
                         )}
-
                     </td>
 
-
                     <td>
-
                         ${escapeHtml(
-                            check.formula ||
-                            "—"
+                            formula
                         )}
-
                     </td>
 
-
                     <td>
-
                         ${escapeHtml(
-                            check.period ||
-                            "—"
+                            period
                         )}
-
                     </td>
-
 
                     <td>
-
                         ${formatValue(
-                            check.calculated_value ??
-                            check.calculated
+                            calculated
                         )}
-
                     </td>
-
 
                     <td>
-
                         ${formatValue(
-                            check.reported_value ??
-                            check.reported
+                            reported
                         )}
-
                     </td>
-
 
                     <td>
-
                         ${formatValue(
-                            check.variance
+                            variance
                         )}
-
                     </td>
-
 
                     <td>
 
                         <span
                             class="status ${statusClass(
-                                check.status
+                                checkStatus
                             )}"
                         >
-
                             ${escapeHtml(
-                                check.status ||
-                                "—"
+                                checkStatus
                             )}
-
                         </span>
 
                     </td>
@@ -1987,7 +2429,6 @@ function renderFinancialValidation(
                 </tr>
 
             `;
-
         }
 
 
@@ -2000,7 +2441,43 @@ function renderFinancialValidation(
             </div>
 
         `;
+    }
 
+
+    /*
+     * Display validation tolerance if backend supplies it.
+     */
+
+    if (
+        validation.tolerance !== undefined ||
+        validation.relative_tolerance !== undefined
+    ) {
+
+        html += `
+
+            <div class="key-value-grid">
+
+                ${
+                    validation.tolerance !== undefined
+                        ? renderInfoCard(
+                            "Tolerance",
+                            validation.tolerance
+                        )
+                        : ""
+                }
+
+                ${
+                    validation.relative_tolerance !== undefined
+                        ? renderInfoCard(
+                            "Relative Tolerance",
+                            validation.relative_tolerance
+                        )
+                        : ""
+                }
+
+            </div>
+
+        `;
     }
 
 
@@ -2012,7 +2489,6 @@ function renderFinancialValidation(
 
 
     return html;
-
 }
 
 
@@ -2036,7 +2512,6 @@ function renderIssues(
         issues.push(
             ...result.issues
         );
-
     }
 
 
@@ -2050,7 +2525,6 @@ function renderIssues(
         issues.push(
             ...result.financial_validation.issues
         );
-
     }
 
 
@@ -2064,14 +2538,61 @@ function renderIssues(
         issues.push(
             ...result.validation.issues
         );
-
     }
 
 
-    if (!issues.length) {
+    /*
+     * Remove duplicate issue messages.
+     */
+
+    const uniqueIssues = [];
+
+
+    const seen =
+        new Set();
+
+
+    for (
+        const issue
+        of issues
+    ) {
+
+        const message =
+            typeof issue === "string"
+                ? issue
+                : (
+                    issue?.message ||
+                    issue?.description ||
+                    JSON.stringify(issue)
+                );
+
+
+        const normalized =
+            String(message)
+                .trim();
+
+
+        if (
+            normalized &&
+            !seen.has(normalized)
+        ) {
+
+            seen.add(
+                normalized
+            );
+
+            uniqueIssues.push(
+                normalized
+            );
+        }
+    }
+
+
+    if (
+        !uniqueIssues.length
+    ) {
 
         return "";
-
     }
 
 
@@ -2083,27 +2604,18 @@ function renderIssues(
                 Issues
             </h3>
 
-
             <ul>
 
-                ${issues
-                    .map(
-                        issue => `
+                ${uniqueIssues
+                    .map(issue => `
 
-                            <li>
+                        <li>
+                            ${escapeHtml(
+                                issue
+                            )}
+                        </li>
 
-                                ${escapeHtml(
-                                    typeof issue ===
-                                    "string"
-                                        ? issue
-                                        : issue.message ||
-                                          String(issue)
-                                )}
-
-                            </li>
-
-                        `
-                    )
+                    `)
                     .join("")}
 
             </ul>
@@ -2111,7 +2623,6 @@ function renderIssues(
         </section>
 
     `;
-
 }
 
 
@@ -2136,7 +2647,6 @@ function renderInfoCard(
 
             </div>
 
-
             <div class="value">
 
                 ${formatValue(
@@ -2148,7 +2658,6 @@ function renderInfoCard(
         </div>
 
     `;
-
 }
 
 
@@ -2162,7 +2671,6 @@ if (uploadForm) {
         "submit",
         processDocument
     );
-
 }
 
 
@@ -2170,9 +2678,12 @@ if (refreshButton) {
 
     refreshButton.addEventListener(
         "click",
-        loadDocuments
-    );
+        async function () {
 
+            await loadDocuments();
+
+        }
+    );
 }
 
 
@@ -2199,7 +2710,6 @@ document.addEventListener(
                 "Backend API is not available. Make sure the FastAPI server is running.",
                 "error"
             );
-
         }
 
 
